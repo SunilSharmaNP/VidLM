@@ -38,6 +38,25 @@ def _push_config_to_environ(mod):
         environ[_k] = _t
 
 
+def _config_settings_dict():
+    """Snapshot all UPPERCASE constants of the user `config.py` to a dict.
+
+    Falls back to walking module attrs when the user's `config.py` does not
+    define `settings_to_dict()` (typical for minimal Colab-generated files)."""
+    fn = getattr(_bot_config, "settings_to_dict", None)
+    if callable(fn):
+        return fn()
+    out = {}
+    for _k in dir(_bot_config):
+        if not _k.isupper() or _k.startswith("_"):
+            continue
+        _v = getattr(_bot_config, _k)
+        if callable(_v):
+            continue
+        out[_k] = "" if _v is None else str(_v)
+    return out
+
+
 _push_config_to_environ(_bot_config)
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
@@ -91,7 +110,7 @@ if DATABASE_URL is not None:
         if path.exists("config.env"):
             _active_deploy_config = dict(dotenv_values("config.env"))
         else:
-            _active_deploy_config = _bot_config.settings_to_dict()
+            _active_deploy_config = _config_settings_dict()
         if (
             old_config is not None
             and old_config == _active_deploy_config
@@ -115,6 +134,26 @@ if UPSTREAM_REPO is not None:
     if path.exists(".git"):
         srun(["rm", "-rf", ".git"])
 
+    # ---- IMPORTANT ----
+    # `git reset --hard origin/{branch}` mirrors the upstream tree exactly.
+    # If the upstream repo tracks a `config.py` (with empty placeholder
+    # values) it will OVERWRITE the user's filled-in `config.py`, wiping
+    # BOT_TOKEN and crashing the bot. Working repos like SilentDemonSD/WZML-X
+    # avoid this by listing config.py in their .gitignore so the upstream
+    # tree never contains it. To stay compatible with upstream repos that
+    # DO track a template `config.py` (such as fixvid:hk), back the file up
+    # before the reset and restore it after.
+    from shutil import copy2 as _copy2
+    _CONFIG_BACKUP = "/tmp/_vidlm_user_config.py"
+    _user_cfg_saved = False
+    if path.exists("config.py"):
+        try:
+            _copy2("config.py", _CONFIG_BACKUP)
+            _user_cfg_saved = True
+            log_info("User config.py backed up before upstream pull")
+        except Exception as _e:
+            log_error(f"Could not back up config.py: {_e}")
+
     update = srun(
         [
             f"git init -q \
@@ -135,3 +174,13 @@ if UPSTREAM_REPO is not None:
         log_error(
             "Something went wrong while updating, check UPSTREAM_REPO if valid or not!"
         )
+
+    # Restore the user's filled config.py on top of whatever the upstream
+    # template provided. This makes the next `python3 -m bot` find the real
+    # BOT_TOKEN / TELEGRAM_API / etc. from the user's Colab-generated file.
+    if _user_cfg_saved and path.exists(_CONFIG_BACKUP):
+        try:
+            _copy2(_CONFIG_BACKUP, "config.py")
+            log_info("User config.py restored after upstream pull")
+        except Exception as _e:
+            log_error(f"Could not restore config.py: {_e}")
