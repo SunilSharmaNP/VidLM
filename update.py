@@ -26,15 +26,11 @@ basicConfig(
     level=INFO,
 )
 try:
-    settings = import_module("config.env")
-    config_file = {
-        key: value.strip() if isinstance(value, str) else value
-        for key, value in vars(settings).items()
-        if not key.startswith("__")
-    }
-except ModuleNotFoundError:
-    log_info("Config.py file is not Added! Checking ENVs..")
-    config_file = {}
+    from dotenv import dotenv_values
+    config_file = dict(dotenv_values("config.env"))
+    except ModuleNotFoundError:
+        log_info("Config.py file is not Added! Checking ENVs..")
+        config_file = {}
 
 env_updates = {key: value.strip() if isinstance(value, str) else value for key, value in environ.items() if key in var_list}
 if env_updates:
