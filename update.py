@@ -1,5 +1,5 @@
 from sys import exit
-from importlib import import_module
+
 from logging import (
     FileHandler,
     StreamHandler,
@@ -27,10 +27,13 @@ basicConfig(
 )
 try:
     from dotenv import dotenv_values
-    config_file = dict(dotenv_values("config.env"))
-    except ModuleNotFoundError:
-        log_info("Config.py file is not Added! Checking ENVs..")
-        config_file = {}
+    config_file = {
+        key: value.strip() if isinstance(value, str) else value
+        for key, value in dotenv_values("config.env").items()
+    }
+except Exception as e:
+    log_info(f"Config.env not loaded: {e}, Checking ENVs..")
+    config_file = {}
 
 env_updates = {key: value.strip() if isinstance(value, str) else value for key, value in environ.items() if key in var_list}
 if env_updates:
