@@ -1,8 +1,11 @@
 from sys import exit
-# `config.py` is the new Python configuration source. Importing it pushes
-# all UPPERCASE settings into os.environ so the rest of this script works
-# unchanged. `config.env` (loaded below if present) acts as a legacy
-# override only.
+# `config.py` is the new Python configuration source. Importing it makes
+# the user's settings available as module attributes. The defensive loader
+# below then pushes every UPPERCASE non-empty constant into os.environ so
+# the rest of this script (and the bot) keeps using `environ.get(...)`
+# exactly as before -- regardless of whether the user supplied the full
+# template `config.py` (with built-in helpers) or a minimal hand-written
+# / Colab-generated one.
 import config as _bot_config  # noqa: F401  (side-effect import)
 from dotenv import load_dotenv, dotenv_values
 from logging import (
@@ -16,6 +19,26 @@ from logging import (
     ERROR,
 )
 from os import path, environ, remove
+
+
+def _push_config_to_environ(mod):
+    """Push every UPPERCASE, non-empty, non-callable attr of *mod* to os.environ.
+
+    Skips empty strings / None so that downstream `environ.get(KEY, default)`
+    calls fall back to the in-code default instead of crashing on int('')."""
+    for _k in dir(mod):
+        if not _k.isupper() or _k.startswith("_"):
+            continue
+        _v = getattr(mod, _k)
+        if callable(_v) or _v is None:
+            continue
+        _t = str(_v)
+        if _t == "":
+            continue
+        environ[_k] = _t
+
+
+_push_config_to_environ(_bot_config)
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 from subprocess import run as srun
