@@ -1,5 +1,10 @@
 from sys import exit
-
+# `config.py` is the new Python configuration source. Importing it pushes
+# all UPPERCASE settings into os.environ so the rest of this script works
+# unchanged. `config.env` (loaded below if present) acts as a legacy
+# override only.
+import config as _bot_config  # noqa: F401  (side-effect import)
+from dotenv import load_dotenv, dotenv_values
 from logging import (
     FileHandler,
     StreamHandler,
@@ -10,71 +15,88 @@ from logging import (
     getLogger,
     ERROR,
 )
-from os import path, remove, environ
+from os import path, environ, remove
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
-from subprocess import run as srun, call as scall
+from subprocess import run as srun
 
 getLogger("pymongo").setLevel(ERROR)
 
 var_list = ['BOT_TOKEN', 'TELEGRAM_API', 'TELEGRAM_HASH', 'OWNER_ID', 'DATABASE_URL', 'BASE_URL', 'UPSTREAM_REPO', 'UPSTREAM_BRANCH']
 
 basicConfig(
-    format="[%(asctime)s] [%(levelname)s] - %(message)s",
-    datefmt="%d-%b-%y %I:%M:%S %p",
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[FileHandler("log.txt"), StreamHandler()],
     level=INFO,
 )
+
+# Optional legacy fallback: if `config.env` is still around, load it on top
+# of the values that `config.py` already populated. New deployments only need
+# `config.py`.
+if path.exists("config.env"):
+    load_dotenv("config.env", override=True)
+
 try:
-    from dotenv import dotenv_values
-    config_file = {
-        key: value.strip() if isinstance(value, str) else value
-        for key, value in dotenv_values("config.env").items()
-    }
-except Exception as e:
-    log_info(f"Config.env not loaded: {e}, Checking ENVs..")
-    config_file = {}
+    if bool(environ.get("_____REMOVE_THIS_LINE_____")):
+        log_error("The README.md file there to be read! Exiting now!")
+        exit(1)
+except:
+    pass
 
-env_updates = {key: value.strip() if isinstance(value, str) else value for key, value in environ.items() if key in var_list}
-if env_updates:
-    log_info("Config data is updated with ENVs!")
-    config_file.update(env_updates)
-
-BOT_TOKEN = config_file.get("BOT_TOKEN", "")
-if not BOT_TOKEN:
+BOT_TOKEN = environ.get("BOT_TOKEN", "")
+if len(BOT_TOKEN) == 0:
     log_error("BOT_TOKEN variable is missing! Exiting now")
     exit(1)
 
 BOT_ID = BOT_TOKEN.split(":", 1)[0]
 
-if DATABASE_URL := config_file.get("DATABASE_URL", "").strip():
+DATABASE_URL = environ.get("DATABASE_URL", "")
+if len(DATABASE_URL) == 0:
+    DATABASE_URL = None
+
+if DATABASE_URL is not None:
     try:
         conn = MongoClient(DATABASE_URL, server_api=ServerApi("1"))
         db = conn.mltb
-        old_config = db.settings.deployConfig.find_one({"_id": BOT_ID}, {"_id": 0})
+        old_config = db.settings.deployConfig.find_one({"_id": BOT_ID})
         config_dict = db.settings.config.find_one({"_id": BOT_ID})
+        if old_config is not None:
+            del old_config["_id"]
+        # Compare against the active deploy config. Use config.env's values
+        # when that file exists (legacy installs), otherwise pull the snapshot
+        # from config.py.
+        if path.exists("config.env"):
+            _active_deploy_config = dict(dotenv_values("config.env"))
+        else:
+            _active_deploy_config = _bot_config.settings_to_dict()
         if (
-            old_config is not None and old_config == config_file or old_config is None
+            old_config is not None
+            and old_config == _active_deploy_config
+            or old_config is None
         ) and config_dict is not None:
-            config_file["UPSTREAM_REPO"] = config_dict["UPSTREAM_REPO"]
-            config_file["UPSTREAM_BRANCH"] = config_dict.get("UPSTREAM_BRANCH", "main")
-            config_file["UPDATE_PKGS"] = config_dict.get("UPDATE_PKGS", "True")
+            environ["UPSTREAM_REPO"] = config_dict["UPSTREAM_REPO"]
+            environ["UPSTREAM_BRANCH"] = config_dict["UPSTREAM_BRANCH"]
         conn.close()
     except Exception as e:
         log_error(f"Database ERROR: {e}")
 
-UPSTREAM_REPO = config_file.get("UPSTREAM_REPO", "").strip()
-UPSTREAM_BRANCH = config_file.get("UPSTREAM_BRANCH", "").strip() or "main"
+UPSTREAM_REPO = environ.get("UPSTREAM_REPO", "")
+if len(UPSTREAM_REPO) == 0:
+    UPSTREAM_REPO = None
 
-if UPSTREAM_REPO:
+UPSTREAM_BRANCH = environ.get("UPSTREAM_BRANCH", "")
+if len(UPSTREAM_BRANCH) == 0:
+    UPSTREAM_BRANCH = "master"
+
+if UPSTREAM_REPO is not None:
     if path.exists(".git"):
         srun(["rm", "-rf", ".git"])
 
     update = srun(
         [
             f"git init -q \
-                     && git config --global user.email 105407900+SilentDemonSD@users.noreply.github.com \
-                     && git config --global user.name SilentDemonSD \
+                     && git config --global user.email e.anastayyar@gmail.com \
+                     && git config --global user.name mltb \
                      && git add . \
                      && git commit -sm update -q \
                      && git remote add origin {UPSTREAM_REPO} \
@@ -84,16 +106,9 @@ if UPSTREAM_REPO:
         shell=True,
     )
 
-    repo = UPSTREAM_REPO.split("/")
-    UPSTREAM_REPO = f"https://github.com/{repo[-2]}/{repo[-1]}"
     if update.returncode == 0:
-        log_info("Successfully updated with Latest Updates !")
+        log_info("Successfully updated with latest commit from UPSTREAM_REPO")
     else:
-        log_error("Something went Wrong ! Recheck your details or Ask Support !")
-    log_info(f"UPSTREAM_REPO: {UPSTREAM_REPO} | UPSTREAM_BRANCH: {UPSTREAM_BRANCH}")
-
-
-UPDATE_PKGS = config_file.get("UPDATE_PKGS", "True")
-if (isinstance(UPDATE_PKGS, str) and UPDATE_PKGS.lower() == "true") or UPDATE_PKGS:
-    scall("uv pip install -U -r requirements.txt", shell=True)
-    log_info("Successfully Updated all the Packages !")
+        log_error(
+            "Something went wrong while updating, check UPSTREAM_REPO if valid or not!"
+        )
