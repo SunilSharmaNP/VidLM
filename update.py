@@ -26,7 +26,7 @@ basicConfig(
     level=INFO,
 )
 try:
-    settings = import_module("config")
+    settings = import_module("config.env")
     config_file = {
         key: value.strip() if isinstance(value, str) else value
         for key, value in vars(settings).items()
