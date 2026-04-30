@@ -54,7 +54,7 @@ if DATABASE_URL := config_file.get("DATABASE_URL", "").strip():
             old_config is not None and old_config == config_file or old_config is None
         ) and config_dict is not None:
             config_file["UPSTREAM_REPO"] = config_dict["UPSTREAM_REPO"]
-            config_file["UPSTREAM_BRANCH"] = config_dict.get("UPSTREAM_BRANCH", "wzv3")
+            config_file["UPSTREAM_BRANCH"] = config_dict.get("UPSTREAM_BRANCH", "main")
             config_file["UPDATE_PKGS"] = config_dict.get("UPDATE_PKGS", "True")
         conn.close()
     except Exception as e:
